@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useMemo, useState, useEffect } from "react";
 import { callServer } from "./services/server";
 
 /** ---------------- helpers ---------------- */
@@ -100,6 +100,19 @@ export default function App() {
   // new feature toggles
   const [smartSelect, setSmartSelect] = useState(true);   // “Choose best subset”
   const [strictMode, setStrictMode] = useState(false);    // “Forbid any ingredients not provided by you”
+
+    // theme + feature toggles
+  const [theme, setTheme] = useState<"dark" | "light">(
+    (localStorage.getItem("theme") as any) || "dark"
+  );
+  const [smartSelect, setSmartSelect] = useState(true);
+  const [strictMode, setStrictMode] = useState(false);
+
+  useEffect(() => {
+    localStorage.setItem("theme", theme);
+    document.documentElement.style.background = theme === "dark" ? "#0b1220" : "#f8fafc";
+  }, [theme]);
+
 
   /** ---------------- app state ---------------- */
   const [loading, setLoading] = useState(false);
@@ -233,6 +246,15 @@ Cuisine: ${cuisine}
 Time limit: ${timeLimit} minutes
 Skill level: ${skill}
 Units: ${units}
+
+Constraints:
+- Choose a subset that tastes best; don't force all items.
+- Respect exclusions.
+- Respect time strictly.
+- JSON only, match the schema.
+${smartSelect ? "- Use Smart Select: pick the best subset only." : ""}
+${strictMode ? "- STRICT MODE: Do not introduce any ingredients the user did not provide." : ""}
+`.trim();
 
 Feature Flags:
 - Smart selection: ${smartSelect ? "ON" : "OFF"}
@@ -391,6 +413,25 @@ Rules:
               style={{ padding: "12px 16px", borderRadius: 8, border: `1px solid ${palette.button}`, background: palette.button, color: "white", cursor: "pointer" }}
             >
               {loading ? "Generating..." : "Generate Recipe"}
+                      <div style={{ gridColumn: "1 / span 2", display: "flex", alignItems: "center", gap: 12, marginTop: 8 }}>
+          <label style={{ display: "flex", alignItems: "center", gap: 6, cursor: "pointer" }}>
+            <input type="checkbox" checked={smartSelect} onChange={(e)=>setSmartSelect(e.target.checked)} />
+            <span>Smart Select ingredients — choose best subset for flavor harmony</span>
+          </label>
+          <label style={{ display: "flex", alignItems: "center", gap: 6, cursor: "pointer" }}>
+            <input type="checkbox" checked={strictMode} onChange={(e)=>setStrictMode(e.target.checked)} />
+            <span>Strict Mode — forbid any ingredients not provided by you</span>
+          </label>
+
+          <button
+            onClick={()=>setTheme(theme === "dark" ? "light" : "dark")}
+            title={theme === "dark" ? "Switch to light" : "Switch to dark"}
+            style={{ marginLeft: "auto", padding: "6px 10px", borderRadius: 8, border: "1px solid #374151", background: "#111827", color: "#fff" }}
+          >
+            {theme === "dark" ? "🌙 Dark" : "☀️ Light"}
+          </button>
+        </div>
+
             </button>
             <div>
               <label style={{ marginRight: 8 }}>Units:</label>
@@ -538,6 +579,130 @@ Rules:
               </ul>
             </Section>
           )}
+        </div>
+      )}
+    </div>
+  );
+}
+/** ---------- cooking timer helpers/components ---------- */
+
+// Parse "5 min", "7 minutes", "30s", "1 hour" → seconds
+function parseStepSeconds(s?: string): number {
+  if (!s) return 0;
+  const m = /(\d+(?:\.\d+)?)\s*(sec|secs|s|min|mins|minute|minutes|hr|hrs|hour|hours)/i.exec(s);
+  if (!m) return 0;
+  const n = parseFloat(m[1]);
+  const u = m[2].toLowerCase();
+  if (u.startsWith("sec") || u === "s") return Math.round(n);
+  if (u.startsWith("min")) return Math.round(n * 60);
+  if (u.startsWith("hr") || u.startsWith("hour")) return Math.round(n * 3600);
+  return 0;
+}
+
+function formatHMS(total: number) {
+  const s = Math.max(0, total | 0);
+  const h = Math.floor(s / 3600);
+  const m = Math.floor((s % 3600) / 60);
+  const ss = s % 60;
+  return (h ? `${h}:` : "") + `${m}`.padStart(2, "0") + ":" + `${ss}`.padStart(2, "0");
+}
+
+function CookTimer({
+  steps,
+  onClose,
+}: {
+  steps: { step: number; instruction: string; time?: string }[];
+  onClose: () => void;
+}) {
+  const [i, setI] = useState(0);
+  const [running, setRunning] = useState(false);
+  const [secs, setSecs] = useState(() => {
+    const first = steps?.[0];
+    return parseStepSeconds(first?.time) || 0;
+  });
+
+  useEffect(() => {
+    let t: any;
+    if (running) {
+      t = setInterval(() => setSecs((v) => v - 1), 1000);
+    }
+    return () => clearInterval(t);
+  }, [running]);
+
+  useEffect(() => {
+    if (secs <= 0 && running) {
+      // auto-advance after short pause
+      setRunning(false);
+      setTimeout(() => next(), 600);
+      // haptic if supported
+      try { navigator.vibrate?.(200); } catch {}
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [secs]);
+
+  function start() {
+    if (secs <= 0) reset();
+    setRunning(true);
+  }
+  function pause() {
+    setRunning(false);
+  }
+  function reset() {
+    const s = parseStepSeconds(steps?.[i]?.time) || 0;
+    setSecs(s);
+  }
+  function next() {
+    const ni = Math.min(i + 1, steps.length - 1);
+    setI(ni);
+    setSecs(parseStepSeconds(steps?.[ni]?.time) || 0);
+  }
+  function prev() {
+    const pi = Math.max(0, i - 1);
+    setI(pi);
+    setSecs(parseStepSeconds(steps?.[pi]?.time) || 0);
+  }
+
+  const step = steps?.[i];
+
+  return (
+    <div style={{ marginTop: 16, padding: 16, borderRadius: 12, background: "#0f172a", border: "1px solid #1f2937" }}>
+      <div style={{ display: "flex", justifyContent: "space-between", gap: 8, alignItems: "center" }}>
+        <strong style={{ fontSize: 16 }}>Cooking Timer</strong>
+        <button onClick={onClose} style={{ fontSize: 12, padding: "6px 10px", borderRadius: 8, border: "1px solid #374151", background: "#111827", color: "#fff" }}>
+          Close
+        </button>
+      </div>
+
+      <div style={{ marginTop: 10, fontSize: 14, opacity: 0.9 }}>
+        <div><strong>Step {step?.step}:</strong> {step?.instruction || "—"}</div>
+        <div style={{ marginTop: 6, display: "flex", alignItems: "baseline", gap: 10 }}>
+          <span style={{ fontSize: 28, fontVariantNumeric: "tabular-nums" }}>{formatHMS(secs)}</span>
+          <span style={{ opacity: 0.7 }}>{step?.time ? `(${step.time})` : "(no set time)"}</span>
+        </div>
+      </div>
+
+      <div style={{ display: "flex", gap: 8, marginTop: 10, flexWrap: "wrap" }}>
+        {!running ? (
+          <button onClick={start} style={{ padding: "8px 12px", borderRadius: 8, border: "1px solid #10b981", background: "#10b981", color: "#0b1220" }}>Start</button>
+        ) : (
+          <button onClick={pause} style={{ padding: "8px 12px", borderRadius: 8, border: "1px solid #f59e0b", background: "#f59e0b", color: "#0b1220" }}>Pause</button>
+        )}
+        <button onClick={reset} style={{ padding: "8px 12px", borderRadius: 8, border: "1px solid #374151", background: "#111827", color: "#fff" }}>Reset</button>
+        <button onClick={prev} style={{ padding: "8px 12px", borderRadius: 8, border: "1px solid #374151", background: "#111827", color: "#fff" }}>Prev</button>
+        <button onClick={next} style={{ padding: "8px 12px", borderRadius: 8, border: "1px solid #374151", background: "#111827", color: "#fff" }}>Next</button>
+      </div>
+
+      {/* simple progress bar if a time exists */}
+      {parseStepSeconds(step?.time) > 0 && (
+        <div style={{ marginTop: 10, height: 8, background: "#1f2937", borderRadius: 999, overflow: "hidden" }}>
+          <div
+            style={{
+              height: "100%",
+              width: `${100 - Math.max(0, Math.min(100, (secs / parseStepSeconds(step?.time)) * 100))}%`,
+              background: "#2563eb",
+              transition: "width 0.2s linear"
+            }}
+          />
         </div>
       )}
     </div>
