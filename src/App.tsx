@@ -6,65 +6,45 @@ function sliceToJson(s: string) {
   if (!s) throw new Error("Empty model response");
   let t = s.trim();
 
-  // Strip code fences like ```json ... ```
+  // Strip ```json fences if present
   t = t.replace(/^```(?:json)?\s*/i, "").replace(/\s*```$/i, "").trim();
 
-  // If it's already pure JSON, return as-is
-  try {
-    JSON.parse(t);
-    return t;
-  } catch {}
+  // Fast path
+  try { JSON.parse(t); return t; } catch {}
 
-  // Brace-balanced scan to extract the first valid {...} object
-  let start = -1;
-  let depth = 0;
-  let inStr = false;
-  let esc = false;
-
+  // Brace-aware scan
+  let start = -1, depth = 0, inStr = false, esc = false;
   for (let i = 0; i < t.length; i++) {
     const c = t[i];
-
     if (inStr) {
-      if (esc) {
-        esc = false;
-      } else if (c === "\\") {
-        esc = true;
-      } else if (c === '"') {
-        inStr = false;
-      }
+      if (esc) esc = false;
+      else if (c === "\\") esc = true;
+      else if (c === '"') inStr = false;
       continue;
     }
-
-    if (c === '"') {
-      inStr = true;
-      continue;
-    }
-
-    if (c === "{") {
-      if (depth === 0) start = i;
-      depth++;
-      continue;
-    }
-
+    if (c === '"') { inStr = true; continue; }
+    if (c === "{") { if (depth === 0) start = i; depth++; continue; }
     if (c === "}") {
       if (depth > 0) {
         depth--;
         if (depth === 0 && start !== -1) {
-          const candidate = t.slice(start, i + 1);
-          try {
-            JSON.parse(candidate);
-            return candidate;
-          } catch {
-            // keep scanning in case there’s another valid object later
-          }
+          const cand = t.slice(start, i + 1);
+          try { JSON.parse(cand); return cand; } catch {}
         }
       }
     }
   }
 
+  // If it started an object but never closed, try to close it
+  if (start !== -1 && depth > 0) {
+    const cand = t.slice(start) + "}".repeat(depth);
+    try { JSON.parse(cand); return cand; } catch {}
+  }
+
   console.debug("RAW MODEL RESPONSE:", s);
   throw new Error("No JSON object found");
 }
+
 
 
 function toArray<T>(x: any): T[] {
@@ -227,7 +207,29 @@ const json = JSON.parse(sliceToJson(raw));
       };
 
       setRecipe(normalized);
-    } catch (e: any) {
+    } catch (e:any) {
+  try {
+    const repairSys = systemPrompt + `
+REPAIR MODE:
+Return the SAME recipe again as one compact JSON object only.
+No explanations, no markdown. End with a closing }.
+Keep it short so it fits.`;
+    const repair = await callServer([
+      { role: "system", content: repairSys },
+      { role: "user",   content: userPrompt }
+    ]);
+    const raw2 = String(repair?.choices?.[0]?.message?.content ?? "");
+    console.debug("RAW FROM MODEL (repair) →", raw2);
+    const json2 = JSON.parse(sliceToJson(raw2));
+    // reuse the same normalization block here, but feed json2
+    const normalized = /* …same as before, using json2 … */;
+    setRecipe(normalized);
+    return;
+  } catch { /* fall through to normal error */ }
+
+  setError(e?.message || "Failed to generate. Try again.");
+}
+
       setError(e?.message || "Failed to generate. Try again.");
     } finally {
       setLoading(false);
