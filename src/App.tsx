@@ -101,18 +101,6 @@ export default function App() {
   const [smartSelect, setSmartSelect] = useState(true);   // “Choose best subset”
   const [strictMode, setStrictMode] = useState(false);    // “Forbid any ingredients not provided by you”
 
-    // theme + feature toggles
-  const [theme, setTheme] = useState<"dark" | "light">(
-    (localStorage.getItem("theme") as any) || "dark"
-  );
-  const [smartSelect, setSmartSelect] = useState(true);
-  const [strictMode, setStrictMode] = useState(false);
-
-  useEffect(() => {
-    localStorage.setItem("theme", theme);
-    document.documentElement.style.background = theme === "dark" ? "#0b1220" : "#f8fafc";
-  }, [theme]);
-
 
   /** ---------------- app state ---------------- */
   const [loading, setLoading] = useState(false);
@@ -240,12 +228,17 @@ Ensure arrays are arrays. Ensure totalTime <= limit.
     setLoading(true);
     try {
       const userPrompt = `
+const userPrompt = `
 User ingredients: ${ingredients}
 Exclude (optional): ${excludes || "(none)"}
 Cuisine: ${cuisine}
 Time limit: ${timeLimit} minutes
 Skill level: ${skill}
 Units: ${units}
+
+Feature Flags:
+- Smart selection: ${smartSelect ? "ON" : "OFF"}
+- Strict mode: ${strictMode ? "ON" : "OFF"}
 
 Constraints:
 - Choose a subset that tastes best; don't force all items.
@@ -256,9 +249,6 @@ ${smartSelect ? "- Use Smart Select: pick the best subset only." : ""}
 ${strictMode ? "- STRICT MODE: Do not introduce any ingredients the user did not provide." : ""}
 `.trim();
 
-Feature Flags:
-- Smart selection: ${smartSelect ? "ON" : "OFF"}
-- Strict mode: ${strictMode ? "ON" : "OFF"}
 
 Rules:
 - If Smart selection is OFF, you MUST use all provided ingredients and none others.
@@ -406,31 +396,27 @@ Rules:
             <strong>Strict Mode</strong> <span style={{ opacity: .75 }}>— forbid any ingredients not provided by you</span>
           </label>
 
-          <div style={{ display: "flex", gap: 8, alignItems: "center", marginLeft: "auto" }}>
-            <button
-              onClick={generate}
-              disabled={loading}
-              style={{ padding: "12px 16px", borderRadius: 8, border: `1px solid ${palette.button}`, background: palette.button, color: "white", cursor: "pointer" }}
-            >
-              {loading ? "Generating..." : "Generate Recipe"}
-                      <div style={{ gridColumn: "1 / span 2", display: "flex", alignItems: "center", gap: 12, marginTop: 8 }}>
-          <label style={{ display: "flex", alignItems: "center", gap: 6, cursor: "pointer" }}>
-            <input type="checkbox" checked={smartSelect} onChange={(e)=>setSmartSelect(e.target.checked)} />
-            <span>Smart Select ingredients — choose best subset for flavor harmony</span>
-          </label>
-          <label style={{ display: "flex", alignItems: "center", gap: 6, cursor: "pointer" }}>
-            <input type="checkbox" checked={strictMode} onChange={(e)=>setStrictMode(e.target.checked)} />
-            <span>Strict Mode — forbid any ingredients not provided by you</span>
-          </label>
+<div style={{ display: "flex", gap: 8, alignItems: "center", marginLeft: "auto" }}>
+  <button
+    onClick={generate}
+    disabled={loading}
+    style={{ padding: "12px 16px", borderRadius: 8, border: `1px solid ${palette.button}`, background: palette.button, color: "white", cursor: "pointer" }}
+  >
+    {loading ? "Generating..." : "Generate Recipe"}
+  </button>
 
-          <button
-            onClick={()=>setTheme(theme === "dark" ? "light" : "dark")}
-            title={theme === "dark" ? "Switch to light" : "Switch to dark"}
-            style={{ marginLeft: "auto", padding: "6px 10px", borderRadius: 8, border: "1px solid #374151", background: "#111827", color: "#fff" }}
-          >
-            {theme === "dark" ? "🌙 Dark" : "☀️ Light"}
-          </button>
-        </div>
+  <div>
+    <label style={{ marginRight: 8 }}>Units:</label>
+    <select
+      value={units}
+      onChange={(e) => setUnits(e.target.value as Units)}
+      style={{ padding: 8, borderRadius: 8, border: `1px solid ${palette.border}`, background: palette.input, color: palette.text }}
+    >
+      <option>US</option>
+      <option>Metric</option>
+    </select>
+  </div>
+</div>
 
             </button>
             <div>
