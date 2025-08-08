@@ -6,32 +6,66 @@ function sliceToJson(s: string) {
   if (!s) throw new Error("Empty model response");
   let t = s.trim();
 
-  // Strip code fences if present
-  if (t.startsWith("```")) {
-    t = t.replace(/^```(?:json)?/i, "").replace(/```$/,"").trim();
-  }
+  // Strip code fences like ```json ... ```
+  t = t.replace(/^```(?:json)?\s*/i, "").replace(/\s*```$/i, "").trim();
 
-  // Try direct object parse
+  // If it's already pure JSON, return as-is
   try {
-    const maybe = JSON.parse(t);
-    if (maybe && typeof maybe === "object" && !Array.isArray(maybe)) return t;
+    JSON.parse(t);
+    return t;
   } catch {}
 
-  // Try to grab the outermost {...}
-  const start = t.indexOf("{");
-  const end = t.lastIndexOf("}");
-  if (start !== -1 && end !== -1 && end > start) {
-    const candidate = t.slice(start, end + 1);
-    try {
-      JSON.parse(candidate);
-      return candidate;
-    } catch {}
+  // Brace-balanced scan to extract the first valid {...} object
+  let start = -1;
+  let depth = 0;
+  let inStr = false;
+  let esc = false;
+
+  for (let i = 0; i < t.length; i++) {
+    const c = t[i];
+
+    if (inStr) {
+      if (esc) {
+        esc = false;
+      } else if (c === "\\") {
+        esc = true;
+      } else if (c === '"') {
+        inStr = false;
+      }
+      continue;
+    }
+
+    if (c === '"') {
+      inStr = true;
+      continue;
+    }
+
+    if (c === "{") {
+      if (depth === 0) start = i;
+      depth++;
+      continue;
+    }
+
+    if (c === "}") {
+      if (depth > 0) {
+        depth--;
+        if (depth === 0 && start !== -1) {
+          const candidate = t.slice(start, i + 1);
+          try {
+            JSON.parse(candidate);
+            return candidate;
+          } catch {
+            // keep scanning in case there’s another valid object later
+          }
+        }
+      }
+    }
   }
 
-  // Last resort: show the raw text so we can debug fast
   console.debug("RAW MODEL RESPONSE:", s);
   throw new Error("No JSON object found");
 }
+
 
 function toArray<T>(x: any): T[] {
   return Array.isArray(x) ? x : x ? [x] : [];
