@@ -323,95 +323,97 @@ ${strictMode ? "- STRICT MODE: Do not introduce any ingredients the user did not
       </div>
       <p style={{ opacity: 0.75, marginTop: 0, marginBottom: 16 }}>AI-powered recipe creation that chooses the best ingredients for perfect dishes. Requests are protected by a server key.</p>
 
-      {/* form */}
-      <div style={{ display: "grid", gap: 12, gridTemplateColumns: "1fr 1fr" }}>
-        <div style={{ gridColumn: "1 / span 2" }}>
-          <label>Your Ingredients</label>
-          <textarea
-            value={ingredients}
-            onChange={(e) => setIngredients(e.target.value)}
-            placeholder="chicken breast, spinach, garlic, rice, onion, olive oil..."
-            rows={3}
-            style={{ width: "100%", padding: 10, borderRadius: 8, border: `1px solid ${palette.border}`, background: palette.input, color: palette.text }}
-          />
-        </div>
-
-        <div>
-          <label>Exclude Ingredients (Optional)</label>
-          <input
-            value={excludes}
-            onChange={(e) => setExcludes(e.target.value)}
-            placeholder="dairy, cilantro..."
-            style={{ width: "100%", padding: 10, borderRadius: 8, border: `1px solid ${palette.border}`, background: palette.input, color: palette.text }}
-          />
-        </div>
-
-        <div>
-          <label>Cuisine</label>
-          <input
-            value={cuisine}
-            onChange={(e) => setCuisine(e.target.value)}
-            placeholder="Mediterranean"
-            style={{ width: "100%", padding: 10, borderRadius: 8, border: `1px solid ${palette.border}`, background: palette.input, color: palette.text }}
-          />
-        </div>
-
-        <div>
-          <label>Time limit (minutes)</label>
-          <input
-            type="number"
-            min={5}
-            value={timeLimit}
-            onChange={(e) => setTimeLimit(parseInt(e.target.value || "0", 10))}
-            style={{ width: "100%", padding: 10, borderRadius: 8, border: `1px solid ${palette.border}`, background: palette.input, color: palette.text }}
-          />
-        </div>
-
-        <div>
-          <label>Skill</label>
-          <select
-            value={skill}
-            onChange={(e) => setSkill(e.target.value as Skill)}
-            style={{ width: "100%", padding: 10, borderRadius: 8, border: `1px solid ${palette.border}`, background: palette.input, color: palette.text }}
-          >
-            <option>Beginner</option>
-            <option>Intermediate</option>
-            <option>Advanced</option>
-          </select>
-        </div>
-
-        {/* feature toggles */}
-        <div style={{ gridColumn: "1 / span 2", display: "flex", gap: 16, alignItems: "center", flexWrap: "wrap" }}>
-          <label>
-            <input type="checkbox" checked={smartSelect} onChange={(e)=>setSmartSelect(e.target.checked)} />{" "}
-            <strong>Smart Select Ingredients</strong> <span style={{ opacity: .75 }}>— choose best subset for flavor harmony</span>
-          </label>
-          <label>
-            <input type="checkbox" checked={strictMode} onChange={(e)=>setStrictMode(e.target.checked)} />{" "}
-            <strong>Strict Mode</strong> <span style={{ opacity: .75 }}>— forbid any ingredients not provided by you</span>
-          </label>
-
-<div style={{ display: "flex", gap: 8, alignItems: "center", marginLeft: "auto" }}>
-  <button
-    onClick={generate}
-    disabled={loading}
-    style={{ padding: "12px 16px", borderRadius: 8, border: `1px solid ${palette.button}`, background: palette.button, color: "white", cursor: "pointer" }}
-  >
-    {loading ? "Generating..." : "Generate Recipe"}
-  </button>
+{/* form */}
+<div style={{ display: "grid", gap: 12, gridTemplateColumns: "1fr 1fr" }}>
+  <div style={{ gridColumn: "1 / span 2" }}>
+    <label>Your Ingredients</label>
+    <textarea
+      value={ingredients}
+      onChange={(e) => setIngredients(e.target.value)}
+      placeholder="chicken breast, spinach, garlic, rice, onion, olive oil..."
+      rows={3}
+      style={{ width: "100%", padding: 10, borderRadius: 8, border: `1px solid ${palette.border}`, background: palette.input, color: palette.text }}
+    />
+  </div>
 
   <div>
-    <label style={{ marginRight: 8 }}>Units:</label>
+    <label>Exclude Ingredients (Optional)</label>
+    <input
+      value={excludes}
+      onChange={(e) => setExcludes(e.target.value)}
+      placeholder="dairy, cilantro..."
+      style={{ width: "100%", padding: 10, borderRadius: 8, border: `1px solid ${palette.border}`, background: palette.input, color: palette.text }}
+    />
+  </div>
+
+  <div>
+    <label>Cuisine</label>
+    <input
+      value={cuisine}
+      onChange={(e) => setCuisine(e.target.value)}
+      placeholder="Mediterranean"
+      style={{ width: "100%", padding: 10, borderRadius: 8, border: `1px solid ${palette.border}`, background: palette.input, color: palette.text }}
+    />
+  </div>
+
+  <div>
+    <label>Time limit (minutes)</label>
+    <input
+      type="number"
+      min={5}
+      value={timeLimit}
+      onChange={(e) => setTimeLimit(parseInt(e.target.value || "0", 10))}
+      style={{ width: "100%", padding: 10, borderRadius: 8, border: `1px solid ${palette.border}`, background: palette.input, color: palette.text }}
+    />
+  </div>
+
+  <div>
+    <label>Skill</label>
     <select
-      value={units}
-      onChange={(e) => setUnits(e.target.value as Units)}
-      style={{ padding: 8, borderRadius: 8, border: `1px solid ${palette.border}`, background: palette.input, color: palette.text }}
+      value={skill}
+      onChange={(e) => setSkill(e.target.value as Skill)}
+      style={{ width: "100%", padding: 10, borderRadius: 8, border: `1px solid ${palette.border}`, background: palette.input, color: palette.text }}
     >
-      <option>US</option>
-      <option>Metric</option>
+      <option>Beginner</option>
+      <option>Intermediate</option>
+      <option>Advanced</option>
     </select>
   </div>
-</div>
+
+  {/* toggles + actions row */}
+  <div style={{ gridColumn: "1 / span 2", display: "flex", gap: 16, alignItems: "center", flexWrap: "wrap" }}>
+    <label>
+      <input type="checkbox" checked={smartSelect} onChange={(e)=>setSmartSelect(e.target.checked)} />{" "}
+      <strong>Smart Select Ingredients</strong> <span style={{ opacity: .75 }}>— choose best subset for flavor harmony</span>
+    </label>
+    <label>
+      <input type="checkbox" checked={strictMode} onChange={(e)=>setStrictMode(e.target.checked)} />{" "}
+      <strong>Strict Mode</strong> <span style={{ opacity: .75 }}>— forbid any ingredients not provided by you</span>
+    </label>
+
+    <div style={{ display: "flex", gap: 8, alignItems: "center", marginLeft: "auto" }}>
+      <button
+        onClick={generate}
+        disabled={loading}
+        style={{ padding: "12px 16px", borderRadius: 8, border: `1px solid ${palette.button}`, background: palette.button, color: "white", cursor: "pointer" }}
+      >
+        {loading ? "Generating..." : "Generate Recipe"}
+      </button>
+      <div>
+        <label style={{ marginRight: 8 }}>Units:</label>
+        <select
+          value={units}
+          onChange={(e) => setUnits(e.target.value as Units)}
+          style={{ padding: 8, borderRadius: 8, border: `1px solid ${palette.border}`, background: palette.input, color: palette.text }}
+        >
+          <option>US</option>
+          <option>Metric</option>
+        </select>
+      </div>
+    </div>
+  </div>
+</div>  {/* ← close the form grid */}
+
 
           
       {error && (
