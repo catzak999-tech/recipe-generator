@@ -1,7 +1,7 @@
-import React, { useMemo, useState } from "react";
+import React, { useEffect, useMemo, useState } from "react";
 import { callServer } from "./services/server";
 
-/** ---------- tiny helpers ---------- */
+/** ---------------- helpers ---------------- */
 function sliceToJson(s: string) {
   if (!s) throw new Error("Empty model response");
   let t = s.trim();
@@ -12,7 +12,7 @@ function sliceToJson(s: string) {
   // Fast path
   try { JSON.parse(t); return t; } catch {}
 
-  // Brace-aware scan
+  // Brace-aware scan (tolerates stray text)
   let start = -1, depth = 0, inStr = false, esc = false;
   for (let i = 0; i < t.length; i++) {
     const c = t[i];
@@ -48,31 +48,48 @@ function sliceToJson(s: string) {
 function toArray<T>(x: any): T[] {
   return Array.isArray(x) ? x : x ? [x] : [];
 }
-
 function normalizeIngredients(list: any): { name: string; amount?: string; note?: string }[] {
   if (!list) return [];
   if (Array.isArray(list)) {
-    return list
-      .map((it: any) => {
-        if (typeof it === "string") return { name: it };
-        return {
-          name: String(it.name ?? it.ingredient ?? ""),
-          amount: it.amount ? String(it.amount) : undefined,
-          note: it.note ? String(it.note) : undefined
-        };
-      })
-      .filter(x => x.name);
+    return list.map((it: any) => {
+      if (typeof it === "string") return { name: it };
+      return {
+        name: String(it.name ?? it.ingredient ?? ""),
+        amount: it.amount ? String(it.amount) : undefined,
+        note: it.note ? String(it.note) : undefined
+      };
+    }).filter(x => x.name);
   }
   if (typeof list === "object") {
     return Object.entries(list).map(([k, v]) => ({ name: k, amount: String(v ?? "") }));
   }
   return [];
 }
+function formatMs(ms: number) {
+  const s = Math.floor(ms / 1000);
+  const m = Math.floor(s / 60);
+  const r = s % 60;
+  return `${m}:${r.toString().padStart(2, "0")}`;
+}
 
 type Skill = "Beginner" | "Intermediate" | "Advanced";
 type Units = "US" | "Metric";
+type Theme = "dark" | "light";
 
 export default function App() {
+  /** ---------------- theme ---------------- */
+  const [theme, setTheme] = useState<Theme>(() => (localStorage.getItem("theme") as Theme) || "dark");
+  useEffect(() => {
+    localStorage.setItem("theme", theme);
+    document.documentElement.style.background = "";
+    document.body.style.background = "";
+  }, [theme]);
+
+  const palette = theme === "dark"
+    ? { text:"#e5e7eb", bg:"#0b1220", panel:"#0b1220", border:"#1f2937", input:"#111827", button:"#2563eb", danger:"#7f1d1d", dangerBorder:"#ef4444" }
+    : { text:"#0b1220", bg:"#ffffff", panel:"#ffffff", border:"#d1d5db", input:"#ffffff", button:"#2563eb", danger:"#fee2e2", dangerBorder:"#ef4444" };
+
+  /** ---------------- form state ---------------- */
   const [ingredients, setIngredients] = useState("");
   const [excludes, setExcludes] = useState("");
   const [cuisine, setCuisine] = useState("Mediterranean");
@@ -80,25 +97,91 @@ export default function App() {
   const [skill, setSkill] = useState<Skill>("Beginner");
   const [units, setUnits] = useState<Units>("US");
 
+  // new feature toggles
+  const [smartSelect, setSmartSelect] = useState(true);   // “Choose best subset”
+  const [strictMode, setStrictMode] = useState(false);    // “Forbid any ingredients not provided by you”
+
+  /** ---------------- app state ---------------- */
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string>("");
   const [recipe, setRecipe] = useState<any>(null);
 
+  /** ---------------- cook mode (timers) ---------------- */
+  const [cookOn, setCookOn] = useState(false);
+  const [stepIdx, setStepIdx] = useState(0);
+  const [running, setRunning] = useState(false);
+  const [totalStart, setTotalStart] = useState<number>(0);
+  const [totalElapsed, setTotalElapsed] = useState<number>(0);
+  const [stepStart, setStepStart] = useState<number>(0);
+  const [stepElapsed, setStepElapsed] = useState<number>(0);
+
+  useEffect(() => {
+    if (!cookOn || !running) return;
+    const id = setInterval(() => {
+      const now = Date.now();
+      setStepElapsed(now - stepStart);
+      setTotalElapsed(now - totalStart);
+    }, 200);
+    return () => clearInterval(id);
+  }, [cookOn, running, stepStart, totalStart]);
+
+  function startCooking() {
+    setCookOn(true);
+    setStepIdx(0);
+    const now = Date.now();
+    setTotalStart(now);
+    setStepStart(now);
+    setTotalElapsed(0);
+    setStepElapsed(0);
+    setRunning(false); // user hits “Start Step” to run
+  }
+  function startPauseStep() {
+    if (!running) {
+      const now = Date.now();
+      setStepStart(now - stepElapsed);
+      setTotalStart(now - totalElapsed);
+      setRunning(true);
+    } else {
+      setRunning(false);
+    }
+  }
+  function nextStep() {
+    setRunning(false);
+    setStepElapsed(0);
+    const next = Math.min(stepIdx + 1, (recipe?.steps?.length || 1) - 1);
+    setStepIdx(next);
+  }
+  function prevStep() {
+    setRunning(false);
+    setStepElapsed(0);
+    const prev = Math.max(stepIdx - 1, 0);
+    setStepIdx(prev);
+  }
+  function finishCooking() {
+    setRunning(false);
+    setCookOn(false);
+  }
+
+  /** ---------------- prompting ---------------- */
   const systemPrompt = useMemo(() => {
     return `
 STRICT MODE. Return JSON ONLY. No markdown, no text outside JSON.
 
-GOAL: Generate the best possible recipe from the user's ingredients. DO NOT use all ingredients by default; select the subset that tastes best for the chosen cuisine.
+GOAL: Generate the best possible recipe from the user's ingredients.
 
 TIME CONSTRAINTS:
-- The recipe "totalTime" must be realistic and <= the user's time limit.
+- "totalTime" must be realistic and <= the user's time limit.
 - No steps that exceed the limit (e.g., don't say "marinate 2 hours" when limit is 15).
-- If raw proteins cannot be safely cooked within the limit, OMIT them and explain why in "omittedIngredients". Choose a no-cook dishType: "spice-blend", "dressing", "sauce", or "snack/salad" using ready-to-eat items only.
+- If raw proteins cannot be safely cooked within the limit, OMIT them and explain why in "omittedIngredients". Prefer a no-cook dishType: "spice-blend", "dressing", "sauce", or "snack/salad" using ready-to-eat items only.
 - Beginner requires explicit safety; never imply undercooked meat.
 
 SMART SELECTION:
-- Pick a coherent subset ("selectedIngredients") and say why each was chosen.
-- Put the rest in "omittedIngredients" with a short reason.
+- If smart selection is ON, pick a coherent subset ("selectedIngredients") and say why each was chosen.
+- If smart selection is OFF, you MUST use all provided ingredients and none others.
+
+STRICT MODE:
+- If strict mode is ON, you may NOT use any ingredient that the user did not provide. No pantry items allowed unless explicitly listed by user.
+- If strict mode is OFF, you may add minimal pantry items (e.g., salt, pepper, oil, water) but keep them few.
 
 MEASUREMENTS:
 - Provide both "ingredientsUS" and "ingredientsMetric" as ARRAYS of objects:
@@ -137,12 +220,10 @@ Ensure arrays are arrays. Ensure totalTime <= limit.
   async function generate() {
     setError("");
     setRecipe(null);
-
     if (!ingredients.trim()) {
       setError("Give me some ingredients first.");
       return;
     }
-
     setLoading(true);
     try {
       const userPrompt = `
@@ -151,34 +232,28 @@ Exclude (optional): ${excludes || "(none)"}
 Cuisine: ${cuisine}
 Time limit: ${timeLimit} minutes
 Skill level: ${skill}
+Units: ${units}
 
-Constraints:
-- Choose a subset that tastes best; don't force all items.
-- Respect exclusions.
-- Respect time strictly.
-- JSON only, match the schema.
+Feature Flags:
+- Smart selection: ${smartSelect ? "ON" : "OFF"}
+- Strict mode: ${strictMode ? "ON" : "OFF"}
+
+Rules:
+- If Smart selection is OFF, you MUST use all provided ingredients and none others.
+- If Strict mode is ON, you MUST NOT add any unlisted ingredients.
+- JSON only, match the schema exactly.
 `.trim();
 
-      // --- primary call ---
       const data = await callServer([
         { role: "system", content: systemPrompt },
         { role: "user", content: userPrompt }
       ]);
 
-// Prefer tool-call JSON if present
-const choice = data?.choices?.[0];
-const toolArgs = choice?.message?.tool_calls?.[0]?.function?.arguments;
+      const raw = String(data?.choices?.[0]?.message?.content ?? "");
+      console.debug("RAW FROM MODEL →", raw);
+      const json = JSON.parse(sliceToJson(raw));
 
-const raw = toolArgs
-  ? String(toolArgs)
-  : String(choice?.message?.content ?? "");
-
-console.debug("RAW FROM MODEL →", raw);
-
-// Tool args are already strict JSON; otherwise fall back to extractor
-const json = JSON.parse(toolArgs ? raw : sliceToJson(raw));
-
-
+      // normalize for rendering
       const normalized = {
         title: json.title || "Untitled",
         summary: json.summary || "",
@@ -191,148 +266,76 @@ const json = JSON.parse(toolArgs ? raw : sliceToJson(raw));
         tasteScore: Number(json.tasteScore ?? 0),
         simplicityScore: Number(json.simplicityScore ?? 0),
         overallScore: Number(json.overallScore ?? 0),
-        selectedIngredients: toArray(json.selectedIngredients)
-          .map((x: any) => ({ name: String(x?.name ?? ""), reason: String(x?.reason ?? "") }))
-          .filter((x: any) => x.name),
-        omittedIngredients: toArray(json.omittedIngredients)
-          .map((x: any) => ({ name: String(x?.name ?? ""), reason: String(x?.reason ?? "") }))
-          .filter((x: any) => x.name),
+        selectedIngredients: toArray(json.selectedIngredients).map((x: any) => ({
+          name: String(x?.name ?? ""),
+          reason: String(x?.reason ?? "")
+        })).filter((x:any)=>x.name),
+        omittedIngredients: toArray(json.omittedIngredients).map((x: any) => ({
+          name: String(x?.name ?? ""),
+          reason: String(x?.reason ?? "")
+        })).filter((x:any)=>x.name),
         ingredientsUS: normalizeIngredients(json.ingredientsUS),
         ingredientsMetric: normalizeIngredients(json.ingredientsMetric),
-        steps: toArray(json.steps)
-          .map((s: any, i: number) => ({
-            step: Number(s?.step ?? i + 1),
-            instruction: String(s?.instruction ?? ""),
-            time: s?.time ? String(s.time) : undefined,
-            heat: s?.heat ? String(s.heat) : undefined,
-            donenessCue: s?.donenessCue ? String(s.donenessCue) : undefined,
-            tip: s?.tip ? String(s.tip) : undefined
-          }))
-          .filter((s: any) => s.instruction),
+        steps: toArray(json.steps).map((s:any,i:number)=>({
+          step: Number(s?.step ?? i+1),
+          instruction: String(s?.instruction ?? ""),
+          time: s?.time ? String(s.time) : undefined,
+          heat: s?.heat ? String(s.heat) : undefined,
+          donenessCue: s?.donenessCue ? String(s.donenessCue) : undefined,
+          tip: s?.tip ? String(s.tip) : undefined
+        })).filter((s:any)=>s.instruction),
         tips: toArray<string>(json.tips).map(String),
-        substitutions: toArray(json.substitutions)
-          .map((x: any) => ({
-            from: String(x?.from ?? ""),
-            to: String(x?.to ?? ""),
-            note: x?.note ? String(x.note) : undefined
-          }))
-          .filter((x: any) => x.from && x.to),
+        substitutions: toArray(json.substitutions).map((x:any)=>({from:String(x?.from??""), to:String(x?.to??""), note: x?.note?String(x.note):undefined})).filter((x:any)=>x.from && x.to),
         notes: toArray<string>(json.notes).map(String)
       };
 
       setRecipe(normalized);
+      setCookOn(false);
     } catch (e: any) {
       console.warn("Primary parse failed:", e);
-
-      // --- repair retry ---
-      try {
-        const repairSys =
-          systemPrompt +
-          `
-REPAIR MODE:
-Return the SAME recipe again as one compact JSON object only.
-No explanations, no markdown. End with a closing }.
-Keep it short so it fits.`;
-
-        const repair = await callServer([
-          { role: "system", content: repairSys },
-          { role: "user", content: userPrompt }
-        ]);
-
-// Prefer tool-call JSON if present
-const choice = data?.choices?.[0];
-console.debug("CHOICE →", choice); // debug once
-
-const toolArgs = choice?.message?.tool_calls?.[0]?.function?.arguments;
-
-let json: any;
-if (toolArgs) {
-  // toolArgs is strict JSON text from the model
-  console.debug("USING TOOL ARGS");
-  json = JSON.parse(toolArgs);
-} else {
-  // fallback for legacy responses (shouldn't happen now)
-  const raw = String(choice?.message?.content ?? "");
-  console.debug("RAW FROM MODEL →", raw);
-  json = JSON.parse(sliceToJson(raw));
-}
-
-
-        const normalized2 = {
-          title: j2.title || "Untitled",
-          summary: j2.summary || "",
-          dishType: j2.dishType || "main",
-          servings: Number(j2.servings ?? 2),
-          cuisine: j2.cuisine || cuisine,
-          prepTime: j2.prepTime || "",
-          cookTime: j2.cookTime || "",
-          totalTime: j2.totalTime || "",
-          tasteScore: Number(j2.tasteScore ?? 0),
-          simplicityScore: Number(j2.simplicityScore ?? 0),
-          overallScore: Number(j2.overallScore ?? 0),
-          selectedIngredients: toArray(j2.selectedIngredients)
-            .map((x: any) => ({ name: String(x?.name ?? ""), reason: String(x?.reason ?? "") }))
-            .filter((x: any) => x.name),
-          omittedIngredients: toArray(j2.omittedIngredients)
-            .map((x: any) => ({ name: String(x?.name ?? ""), reason: String(x?.reason ?? "") }))
-            .filter((x: any) => x.name),
-          ingredientsUS: normalizeIngredients(j2.ingredientsUS),
-          ingredientsMetric: normalizeIngredients(j2.ingredientsMetric),
-          steps: toArray(j2.steps)
-            .map((s: any, i: number) => ({
-              step: Number(s?.step ?? i + 1),
-              instruction: String(s?.instruction ?? ""),
-              time: s?.time ? String(s.time) : undefined,
-              heat: s?.heat ? String(s.heat) : undefined,
-              donenessCue: s?.donenessCue ? String(s.donenessCue) : undefined,
-              tip: s?.tip ? String(s.tip) : undefined
-            }))
-            .filter((s: any) => s.instruction),
-          tips: toArray<string>(j2.tips).map(String),
-          substitutions: toArray(j2.substitutions)
-            .map((x: any) => ({
-              from: String(x?.from ?? ""),
-              to: String(x?.to ?? ""),
-              note: x?.note ? String(x.note) : undefined
-            }))
-            .filter((x: any) => x.from && x.to),
-          notes: toArray<string>(j2.notes).map(String)
-        };
-
-        setRecipe(normalized2);
-      } catch (e2: any) {
-        setError(e?.message || e2?.message || "Failed to generate. Try again.");
-      }
+      setError(e?.message || "Failed to generate. Try again.");
     } finally {
       setLoading(false);
     }
   }
 
+  /** ---------------- UI ---------------- */
   return (
-    <div style={{ padding: "24px", maxWidth: 980, margin: "32px auto", color: "#e5e7eb", fontFamily: "ui-sans-serif, system-ui" }}>
-      <h1 style={{ fontSize: 32, marginBottom: 8 }}>Recipe Generator</h1>
-      <p style={{ opacity: 0.75, marginBottom: 16 }}>Give me your ingredients. I’ll pick the best combo that fits your time and skill.</p>
+    <div style={{ padding: 24, maxWidth: 980, margin: "32px auto", color: palette.text, fontFamily: "ui-sans-serif, system-ui", background: palette.bg }}>
+      {/* Header */}
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
+        <h1 style={{ fontSize: 32, margin: 0 }}>Smart Recipe Generator</h1>
+        <div style={{ display: "flex", gap: 8 }}>
+          <button
+            onClick={() => setTheme(theme === "dark" ? "light" : "dark")}
+            style={{ padding: "8px 12px", borderRadius: 8, border: `1px solid ${palette.border}`, background: palette.panel, color: palette.text, cursor: "pointer" }}
+          >
+            {theme === "dark" ? "🌙 Dark" : "☀️ Light"}
+          </button>
+        </div>
+      </div>
+      <p style={{ opacity: 0.75, marginTop: 0, marginBottom: 16 }}>AI-powered recipe creation that chooses the best ingredients for perfect dishes. Requests are protected by a server key.</p>
 
       {/* form */}
       <div style={{ display: "grid", gap: 12, gridTemplateColumns: "1fr 1fr" }}>
         <div style={{ gridColumn: "1 / span 2" }}>
-          <label>Ingredients you have (comma separated)</label>
+          <label>Your Ingredients</label>
           <textarea
             value={ingredients}
             onChange={(e) => setIngredients(e.target.value)}
-            placeholder="chicken thighs, lemon, garlic, rice, honey..."
+            placeholder="chicken breast, spinach, garlic, rice, onion, olive oil..."
             rows={3}
-            style={{ width: "100%", padding: 10, borderRadius: 8, border: "1px solid #374151", background: "#111827", color: "#fff" }}
+            style={{ width: "100%", padding: 10, borderRadius: 8, border: `1px solid ${palette.border}`, background: palette.input, color: palette.text }}
           />
         </div>
 
         <div>
-          <label>Exclude (optional)</label>
+          <label>Exclude Ingredients (Optional)</label>
           <input
             value={excludes}
             onChange={(e) => setExcludes(e.target.value)}
             placeholder="dairy, cilantro..."
-            style={{ width: "100%", padding: 10, borderRadius: 8, border: "1px solid #374151", background: "#111827", color: "#fff" }}
+            style={{ width: "100%", padding: 10, borderRadius: 8, border: `1px solid ${palette.border}`, background: palette.input, color: palette.text }}
           />
         </div>
 
@@ -342,7 +345,7 @@ if (toolArgs) {
             value={cuisine}
             onChange={(e) => setCuisine(e.target.value)}
             placeholder="Mediterranean"
-            style={{ width: "100%", padding: 10, borderRadius: 8, border: "1px solid #374151", background: "#111827", color: "#fff" }}
+            style={{ width: "100%", padding: 10, borderRadius: 8, border: `1px solid ${palette.border}`, background: palette.input, color: palette.text }}
           />
         </div>
 
@@ -353,7 +356,7 @@ if (toolArgs) {
             min={5}
             value={timeLimit}
             onChange={(e) => setTimeLimit(parseInt(e.target.value || "0", 10))}
-            style={{ width: "100%", padding: 10, borderRadius: 8, border: "1px solid #374151", background: "#111827", color: "#fff" }}
+            style={{ width: "100%", padding: 10, borderRadius: 8, border: `1px solid ${palette.border}`, background: palette.input, color: palette.text }}
           />
         </div>
 
@@ -362,7 +365,7 @@ if (toolArgs) {
           <select
             value={skill}
             onChange={(e) => setSkill(e.target.value as Skill)}
-            style={{ width: "100%", padding: 10, borderRadius: 8, border: "1px solid #374151", background: "#111827", color: "#fff" }}
+            style={{ width: "100%", padding: 10, borderRadius: 8, border: `1px solid ${palette.border}`, background: palette.input, color: palette.text }}
           >
             <option>Beginner</option>
             <option>Intermediate</option>
@@ -370,51 +373,101 @@ if (toolArgs) {
           </select>
         </div>
 
-        <div style={{ display: "flex", gap: 8, alignItems: "end" }}>
-          <button
-            onClick={generate}
-            disabled={loading}
-            style={{ padding: "12px 16px", borderRadius: 8, border: "1px solid #2563eb", background: "#2563eb", color: "white", cursor: "pointer" }}
-          >
-            {loading ? "Generating..." : "Generate Recipe"}
-          </button>
-          <div style={{ marginLeft: 12 }}>
-            <label style={{ marginRight: 8 }}>Units:</label>
-            <select
-              value={units}
-              onChange={(e) => setUnits(e.target.value as Units)}
-              style={{ padding: 8, borderRadius: 8, border: "1px solid #374151", background: "#111827", color: "#fff" }}
+        {/* feature toggles */}
+        <div style={{ gridColumn: "1 / span 2", display: "flex", gap: 16, alignItems: "center", flexWrap: "wrap" }}>
+          <label>
+            <input type="checkbox" checked={smartSelect} onChange={(e)=>setSmartSelect(e.target.checked)} />{" "}
+            <strong>Smart Select Ingredients</strong> <span style={{ opacity: .75 }}>— choose best subset for flavor harmony</span>
+          </label>
+          <label>
+            <input type="checkbox" checked={strictMode} onChange={(e)=>setStrictMode(e.target.checked)} />{" "}
+            <strong>Strict Mode</strong> <span style={{ opacity: .75 }}>— forbid any ingredients not provided by you</span>
+          </label>
+
+          <div style={{ display: "flex", gap: 8, alignItems: "center", marginLeft: "auto" }}>
+            <button
+              onClick={generate}
+              disabled={loading}
+              style={{ padding: "12px 16px", borderRadius: 8, border: `1px solid ${palette.button}`, background: palette.button, color: "white", cursor: "pointer" }}
             >
-              <option>US</option>
-              <option>Metric</option>
-            </select>
+              {loading ? "Generating..." : "Generate Recipe"}
+            </button>
+            <div>
+              <label style={{ marginRight: 8 }}>Units:</label>
+              <select
+                value={units}
+                onChange={(e) => setUnits(e.target.value as Units)}
+                style={{ padding: 8, borderRadius: 8, border: `1px solid ${palette.border}`, background: palette.input, color: palette.text }}
+              >
+                <option>US</option>
+                <option>Metric</option>
+              </select>
+            </div>
           </div>
         </div>
       </div>
 
       {error && (
-        <div style={{ marginTop: 16, padding: 12, background: "#7f1d1d", border: "1px solid #ef4444", borderRadius: 8 }}>
+        <div style={{ marginTop: 16, padding: 12, background: palette.danger, border: `1px solid ${palette.dangerBorder}`, borderRadius: 8, color: theme === "dark" ? "#fff" : "#7f1d1d" }}>
           {error}
         </div>
       )}
 
       {/* recipe display */}
       {recipe && (
-        <div style={{ marginTop: 24, padding: 18, borderRadius: 12, background: "#0b1220", border: "1px solid #1f2937" }}>
+        <div style={{ marginTop: 24, padding: 18, borderRadius: 12, background: palette.panel, border: `1px solid ${palette.border}` }}>
           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", flexWrap: "wrap", gap: 8 }}>
-            <h2 style={{ fontSize: 24 }}>{recipe.title}</h2>
+            <h2 style={{ fontSize: 20, margin: 0 }}>{recipe.title}</h2>
             <div style={{ opacity: 0.8, fontSize: 14 }}>
               {recipe.servings} servings • {recipe.totalTime} • {recipe.cuisine}
             </div>
           </div>
           <p style={{ opacity: 0.8, marginTop: 6 }}>{recipe.summary}</p>
 
-          <div style={{ display: "flex", gap: 12, marginTop: 12, flexWrap: "wrap" }}>
+          {/* badges */}
+          <div style={{ display: "flex", gap: 8, marginTop: 12, flexWrap: "wrap" }}>
             <Badge label={`Taste ${recipe.tasteScore}/10`} />
             <Badge label={`Simplicity ${recipe.simplicityScore}/10`} />
             <Badge label={`Overall ${recipe.overallScore}/10`} />
             <Badge label={`Dish: ${recipe.dishType}`} />
           </div>
+
+          {/* cook mode controls */}
+          <div style={{ marginTop: 14, display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
+            <button onClick={startCooking} style={{ padding: "8px 12px", borderRadius: 8, border: `1px solid ${palette.border}`, background: palette.input, color: palette.text, cursor: "pointer" }}>
+              🍳 Start Cooking
+            </button>
+            {cookOn && (
+              <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
+                <strong>Step {stepIdx + 1}/{recipe.steps.length}</strong>
+                <span>• Step: {formatMs(stepElapsed)} • Total: {formatMs(totalElapsed)}</span>
+                <button onClick={startPauseStep} style={{ padding: "6px 10px", borderRadius: 8, border: `1px solid ${palette.border}`, background: palette.input, color: palette.text, cursor: "pointer" }}>
+                  {running ? "Pause" : "Start Step"}
+                </button>
+                <button onClick={prevStep} style={{ padding: "6px 10px", borderRadius: 8, border: `1px solid ${palette.border}`, background: palette.input, color: palette.text, cursor: "pointer" }}>
+                  ◀︎ Prev
+                </button>
+                <button onClick={nextStep} style={{ padding: "6px 10px", borderRadius: 8, border: `1px solid ${palette.border}`, background: palette.input, color: palette.text, cursor: "pointer" }}>
+                  Next ▶︎
+                </button>
+                <button onClick={finishCooking} style={{ padding: "6px 10px", borderRadius: 8, border: `1px solid ${palette.border}`, background: palette.input, color: palette.text, cursor: "pointer" }}>
+                  ✅ Finish
+                </button>
+              </div>
+            )}
+          </div>
+
+          {/* show current step in cook mode */}
+          {cookOn && recipe.steps?.[stepIdx] && (
+            <div style={{ marginTop: 12, padding: 12, borderRadius: 8, border: `1px dashed ${palette.border}` }}>
+              <div style={{ fontWeight: 600, marginBottom: 6 }}>Current Step</div>
+              <div>{recipe.steps[stepIdx].instruction}</div>
+              <div style={{ fontSize: 12, opacity: 0.8, marginTop: 4 }}>
+                {recipe.steps[stepIdx].time ? `⏱ ${recipe.steps[stepIdx].time} ` : ""}{recipe.steps[stepIdx].heat ? ` • 🔥 ${recipe.steps[stepIdx].heat}` : ""}{recipe.steps[stepIdx].donenessCue ? ` • ✅ ${recipe.steps[stepIdx].donenessCue}` : ""}
+              </div>
+              {recipe.steps[stepIdx].tip ? <div style={{ fontSize: 12, opacity: 0.8, marginTop: 4 }}>Tip: {recipe.steps[stepIdx].tip}</div> : null}
+            </div>
+          )}
 
           <Section title="Selected Ingredients">
             <ul style={{ margin: 0, paddingLeft: 18 }}>
@@ -502,7 +555,7 @@ function Section({ title, children }: { title: string; children: React.ReactNode
 }
 function Badge({ label }: { label: string }) {
   return (
-    <span style={{ fontSize: 12, border: "1px solid #374151", padding: "4px 8px", borderRadius: 999, background: "#0b1220" }}>
+    <span style={{ fontSize: 12, border: "1px solid #374151", padding: "4px 8px", borderRadius: 999 }}>
       {label}
     </span>
   );
