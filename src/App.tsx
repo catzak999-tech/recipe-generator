@@ -218,17 +218,17 @@ Ensure arrays are arrays. Ensure totalTime <= limit.
 `.trim();
   }, []);
 
-  async function generate() {
-    setError("");
-    setRecipe(null);
-    if (!ingredients.trim()) {
-      setError("Give me some ingredients first.");
-      return;
-    }
-    setLoading(true);
-    try {
-      const userPrompt = `
-const userPrompt = `
+async function generate() {
+  setError("");
+  setRecipe(null);
+  if (!ingredients.trim()) {
+    setError("Give me some ingredients first.");
+    return;
+  }
+
+  setLoading(true);
+  try {
+    const userPrompt = `
 User ingredients: ${ingredients}
 Exclude (optional): ${excludes || "(none)"}
 Cuisine: ${cuisine}
@@ -249,67 +249,62 @@ ${smartSelect ? "- Use Smart Select: pick the best subset only." : ""}
 ${strictMode ? "- STRICT MODE: Do not introduce any ingredients the user did not provide." : ""}
 `.trim();
 
+    const data = await callServer([
+      { role: "system", content: systemPrompt },
+      { role: "user", content: userPrompt }
+    ]);
 
-Rules:
-- If Smart selection is OFF, you MUST use all provided ingredients and none others.
-- If Strict mode is ON, you MUST NOT add any unlisted ingredients.
-- JSON only, match the schema exactly.
-`.trim();
+    const raw = String(data?.choices?.[0]?.message?.content ?? "");
+    console.debug("RAW FROM MODEL →", raw);
+    const json = JSON.parse(sliceToJson(raw));
 
-      const data = await callServer([
-        { role: "system", content: systemPrompt },
-        { role: "user", content: userPrompt }
-      ]);
-
-      const raw = String(data?.choices?.[0]?.message?.content ?? "");
-      console.debug("RAW FROM MODEL →", raw);
-      const json = JSON.parse(sliceToJson(raw));
-
-      // normalize for rendering
-      const normalized = {
-        title: json.title || "Untitled",
-        summary: json.summary || "",
-        dishType: json.dishType || "main",
-        servings: Number(json.servings ?? 2),
-        cuisine: json.cuisine || cuisine,
-        prepTime: json.prepTime || "",
-        cookTime: json.cookTime || "",
-        totalTime: json.totalTime || "",
-        tasteScore: Number(json.tasteScore ?? 0),
-        simplicityScore: Number(json.simplicityScore ?? 0),
-        overallScore: Number(json.overallScore ?? 0),
-        selectedIngredients: toArray(json.selectedIngredients).map((x: any) => ({
-          name: String(x?.name ?? ""),
-          reason: String(x?.reason ?? "")
-        })).filter((x:any)=>x.name),
-        omittedIngredients: toArray(json.omittedIngredients).map((x: any) => ({
-          name: String(x?.name ?? ""),
-          reason: String(x?.reason ?? "")
-        })).filter((x:any)=>x.name),
-        ingredientsUS: normalizeIngredients(json.ingredientsUS),
-        ingredientsMetric: normalizeIngredients(json.ingredientsMetric),
-        steps: toArray(json.steps).map((s:any,i:number)=>({
-          step: Number(s?.step ?? i+1),
+    const normalized = {
+      title: json.title || "Untitled",
+      summary: json.summary || "",
+      dishType: json.dishType || "main",
+      servings: Number(json.servings ?? 2),
+      cuisine: json.cuisine || cuisine,
+      prepTime: json.prepTime || "",
+      cookTime: json.cookTime || "",
+      totalTime: json.totalTime || "",
+      tasteScore: Number(json.tasteScore ?? 0),
+      simplicityScore: Number(json.simplicityScore ?? 0),
+      overallScore: Number(json.overallScore ?? 0),
+      selectedIngredients: toArray(json.selectedIngredients)
+        .map((x: any) => ({ name: String(x?.name ?? ""), reason: String(x?.reason ?? "") }))
+        .filter((x: any) => x.name),
+      omittedIngredients: toArray(json.omittedIngredients)
+        .map((x: any) => ({ name: String(x?.name ?? ""), reason: String(x?.reason ?? "") }))
+        .filter((x: any) => x.name),
+      ingredientsUS: normalizeIngredients(json.ingredientsUS),
+      ingredientsMetric: normalizeIngredients(json.ingredientsMetric),
+      steps: toArray(json.steps)
+        .map((s: any, i: number) => ({
+          step: Number(s?.step ?? i + 1),
           instruction: String(s?.instruction ?? ""),
           time: s?.time ? String(s.time) : undefined,
           heat: s?.heat ? String(s.heat) : undefined,
           donenessCue: s?.donenessCue ? String(s.donenessCue) : undefined,
           tip: s?.tip ? String(s.tip) : undefined
-        })).filter((s:any)=>s.instruction),
-        tips: toArray<string>(json.tips).map(String),
-        substitutions: toArray(json.substitutions).map((x:any)=>({from:String(x?.from??""), to:String(x?.to??""), note: x?.note?String(x.note):undefined})).filter((x:any)=>x.from && x.to),
-        notes: toArray<string>(json.notes).map(String)
-      };
+        }))
+        .filter((s: any) => s.instruction),
+      tips: toArray<string>(json.tips).map(String),
+      substitutions: toArray(json.substitutions)
+        .map((x: any) => ({ from: String(x?.from ?? ""), to: String(x?.to ?? ""), note: x?.note ? String(x.note) : undefined }))
+        .filter((x: any) => x.from && x.to),
+      notes: toArray<string>(json.notes).map(String)
+    };
 
-      setRecipe(normalized);
-      setCookOn(false);
-    } catch (e: any) {
-      console.warn("Primary parse failed:", e);
-      setError(e?.message || "Failed to generate. Try again.");
-    } finally {
-      setLoading(false);
-    }
+    setRecipe(normalized);
+    setCookOn(false);
+  } catch (e: any) {
+    console.warn("Primary parse failed:", e);
+    setError(e?.message || "Failed to generate. Try again.");
+  } finally {
+    setLoading(false);
   }
+}
+
 
   /** ---------------- UI ---------------- */
   return (
@@ -418,22 +413,7 @@ Rules:
   </div>
 </div>
 
-            </button>
-            <div>
-              <label style={{ marginRight: 8 }}>Units:</label>
-              <select
-                value={units}
-                onChange={(e) => setUnits(e.target.value as Units)}
-                style={{ padding: 8, borderRadius: 8, border: `1px solid ${palette.border}`, background: palette.input, color: palette.text }}
-              >
-                <option>US</option>
-                <option>Metric</option>
-              </select>
-            </div>
-          </div>
-        </div>
-      </div>
-
+          
       {error && (
         <div style={{ marginTop: 16, padding: 12, background: palette.danger, border: `1px solid ${palette.dangerBorder}`, borderRadius: 8, color: theme === "dark" ? "#fff" : "#7f1d1d" }}>
           {error}
