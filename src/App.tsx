@@ -165,9 +165,19 @@ Constraints:
         { role: "user", content: userPrompt }
       ]);
 
-      const raw = String(data?.choices?.[0]?.message?.content ?? "");
-      console.debug("RAW FROM MODEL →", raw);
-      const json = JSON.parse(sliceToJson(raw));
+// Prefer tool-call JSON if present
+const choice = data?.choices?.[0];
+const toolArgs = choice?.message?.tool_calls?.[0]?.function?.arguments;
+
+const raw = toolArgs
+  ? String(toolArgs)
+  : String(choice?.message?.content ?? "");
+
+console.debug("RAW FROM MODEL →", raw);
+
+// Tool args are already strict JSON; otherwise fall back to extractor
+const json = JSON.parse(toolArgs ? raw : sliceToJson(raw));
+
 
       const normalized = {
         title: json.title || "Untitled",
