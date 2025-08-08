@@ -87,29 +87,68 @@ export default async function handler(req: Request) {
     });
   }
 
-  // Force JSON mode so the frontend always gets a single JSON object
-  const useModel = model || 'gpt-4o-mini';
-  const payload = {
-    model: useModel,
-    temperature,
-    max_tokens,
-    response_format: { type: 'json_object' },
-    messages
-  };
+   // Try a few models and gracefully fall back if JSON mode isn't supported
+  const tryModels = [
+    model,                 // whatever the client asked for
+    'gpt-4o-mini',         // often supports JSON mode
+    'gpt-4o',              // fast, broad support
+    'gpt-4-turbo',         // backup
+    'gpt-3.5-turbo'        // last-ditch
+  ].filter(Boolean) as string[];
 
-  const resp = await fetch('https://api.openai.com/v1/chat/completions', {
-    method: 'POST',
-    headers: { 'content-type': 'application/json', authorization: `Bearer ${OPENAI_KEY}` },
-    body: JSON.stringify(payload)
-  });
+  let lastErr: any = null;
 
-  if (!resp.ok) {
-    const err = await resp.text();
-    return new Response(JSON.stringify({ error: 'OpenAI error', detail: err }), {
-      status: resp.status, headers: corsHeaders(origin)
+  for (const m of tryModels) {
+    // Build base payload
+    const payload: any = {
+      model: m,
+      temperature,
+      max_tokens,
+      messages
+    };
+
+    // Only attach JSON mode for models that typically support it
+    if (/^(gpt-4o-mini|gpt-4\.1|o4-mini)/.test(m)) {
+      payload.response_format = { type: 'json_object' };
+    }
+
+    let resp = await fetch('https://api.openai.com/v1/chat/completions', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', authorization: `Bearer ${OPENAI_KEY}` },
+      body: JSON.stringify(payload)
     });
+
+    if (resp.ok) {
+      const data = await resp.text();
+      return new Response(data, { status: 200, headers: corsHeaders(origin) });
+    }
+
+    // Peek at the error to decide if we should retry without JSON mode
+    const detailText = await resp.text();
+    const detail = (() => { try { return JSON.parse(detailText); } catch { return null; } })();
+
+    const msg = String(detail?.error?.message || detailText || '');
+    const type = String(detail?.error?.type || '');
+
+    // If the failure is specifically about response_format, retry once without it
+    if (payload.response_format && (msg.includes('response_format') || type === 'invalid_request_error')) {
+      delete payload.response_format;
+      resp = await fetch('https://api.openai.com/v1/chat/completions', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json', authorization: `Bearer ${OPENAI_KEY}` },
+        body: JSON.stringify(payload)
+      });
+      if (resp.ok) {
+        const data = await resp.text();
+        return new Response(data, { status: 200, headers: corsHeaders(origin) });
+      }
+      lastErr = { status: resp.status, detail: await resp.text() };
+      continue;
+    }
+
+    lastErr = { status: resp.status, detail: detail || detailText };
   }
 
-  const data = await resp.text();
-  return new Response(data, { status: 200, headers: corsHeaders(origin) });
-}
+  return new Response(JSON.stringify({ error: 'OpenAI error', detail: lastErr }), {
+    status: 500, headers: corsHeaders(origin)
+  });
