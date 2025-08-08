@@ -1,23 +1,18 @@
-const BASE = ''; // same-origin in production
-
+// src/services/server.ts
 export async function callServer(messages: any[]) {
-  const token = import.meta.env.VITE_PUBLIC_APP_TOKEN || '';
-  const res = await fetch(`${BASE}/api/generate`, {
-    method: 'POST',
-    headers: {
-      'content-type': 'application/json',
-      ...(token ? { 'x-app-token': token } : {})
-    },
+  const resp = await fetch("/api/generate", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
     body: JSON.stringify({
-      model: 'gpt-4',
-      temperature: 0.2,
-      max_tokens: 120,
-      messages
+      messages,
+      // harmless if backend already forces it, but keeps things in sync
+      model: "gpt-4o-mini"
     })
   });
-  if (!res.ok) {
-    const detail = await res.text().catch(()=> '');
-    throw new Error(`Server error ${res.status}: ${detail}`);
+
+  if (!resp.ok) {
+    const detail = await resp.text();
+    throw new Error(`Server error ${resp.status}: ${detail}`);
   }
-  return res.json();
+  return await resp.json();
 }
