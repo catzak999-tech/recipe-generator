@@ -3,21 +3,53 @@ import { callServer } from "./services/server";
 
 /** ---------- tiny helpers ---------- */
 function sliceToJson(s: string) {
-  const start = s.indexOf("{");
-  const end = s.lastIndexOf("}");
-  if (start === -1 || end === -1 || end <= start) throw new Error("No JSON object found");
-  return s.slice(start, end + 1);
+  if (!s) throw new Error("Empty model response");
+  let t = s.trim();
+
+  // Strip code fences if present
+  if (t.startsWith("```")) {
+    t = t.replace(/^```(?:json)?/i, "").replace(/```$/,"").trim();
+  }
+
+  // Try direct object parse
+  try {
+    const maybe = JSON.parse(t);
+    if (maybe && typeof maybe === "object" && !Array.isArray(maybe)) return t;
+  } catch {}
+
+  // Try to grab the outermost {...}
+  const start = t.indexOf("{");
+  const end = t.lastIndexOf("}");
+  if (start !== -1 && end !== -1 && end > start) {
+    const candidate = t.slice(start, end + 1);
+    try {
+      JSON.parse(candidate);
+      return candidate;
+    } catch {}
+  }
+
+  // Last resort: show the raw text so we can debug fast
+  console.debug("RAW MODEL RESPONSE:", s);
+  throw new Error("No JSON object found");
 }
+
 function toArray<T>(x: any): T[] {
   return Array.isArray(x) ? x : x ? [x] : [];
 }
+
 function normalizeIngredients(list: any): { name: string; amount?: string; note?: string }[] {
   if (!list) return [];
   if (Array.isArray(list)) {
-    return list.map((it: any) => {
-      if (typeof it === "string") return { name: it };
-      return { name: String(it.name ?? it.ingredient ?? ""), amount: it.amount ? String(it.amount) : undefined, note: it.note ? String(it.note) : undefined };
-    }).filter(x => x.name);
+    return list
+      .map((it: any) => {
+        if (typeof it === "string") return { name: it };
+        return {
+          name: String(it.name ?? it.ingredient ?? ""),
+          amount: it.amount ? String(it.amount) : undefined,
+          note: it.note ? String(it.note) : undefined
+        };
+      })
+      .filter(x => x.name);
   }
   // object map fallback { "paprika": "1 tsp" }
   if (typeof list === "object") {
@@ -119,8 +151,10 @@ Constraints:
         { role: "user", content: userPrompt }
       ]);
 
-      const raw = data?.choices?.[0]?.message?.content ?? "";
-      const json = JSON.parse(sliceToJson(raw));
+const raw = data?.choices?.[0]?.message?.content ?? "";
+console.debug('RAW FROM MODEL →', raw);
+const json = JSON.parse(sliceToJson(raw));
+
 
       // normalize shape for rendering
       const normalized = {
