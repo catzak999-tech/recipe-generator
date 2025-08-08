@@ -45,8 +45,6 @@ function sliceToJson(s: string) {
   throw new Error("No JSON object found");
 }
 
-
-
 function toArray<T>(x: any): T[] {
   return Array.isArray(x) ? x : x ? [x] : [];
 }
@@ -65,7 +63,6 @@ function normalizeIngredients(list: any): { name: string; amount?: string; note?
       })
       .filter(x => x.name);
   }
-  // object map fallback { "paprika": "1 tsp" }
   if (typeof list === "object") {
     return Object.entries(list).map(([k, v]) => ({ name: k, amount: String(v ?? "") }));
   }
@@ -137,154 +134,14 @@ Ensure arrays are arrays. Ensure totalTime <= limit.
 `.trim();
   }, []);
 
-async function generate() {
-  setError("");
-  setRecipe(null);
+  async function generate() {
+    setError("");
+    setRecipe(null);
 
-  if (!ingredients.trim()) {
-    setError("Give me some ingredients first.");
-    return;
-  }
-
-  setLoading(true);
-  try {
-    const userPrompt = `
-User ingredients: ${ingredients}
-Exclude (optional): ${excludes || "(none)"}
-Cuisine: ${cuisine}
-Time limit: ${timeLimit} minutes
-Skill level: ${skill}
-
-Constraints:
-- Choose a subset that tastes best; don't force all items.
-- Respect exclusions.
-- Respect time strictly.
-- JSON only, match the schema.
-`.trim();
-
-    // --- primary call ---
-    const data = await callServer([
-      { role: "system", content: systemPrompt },
-      { role: "user", content: userPrompt }
-    ]);
-
-    const raw = String(data?.choices?.[0]?.message?.content ?? "");
-    console.debug("RAW FROM MODEL →", raw);
-    const json = JSON.parse(sliceToJson(raw));
-
-    const normalized = {
-      title: json.title || "Untitled",
-      summary: json.summary || "",
-      dishType: json.dishType || "main",
-      servings: Number(json.servings ?? 2),
-      cuisine: json.cuisine || cuisine,
-      prepTime: json.prepTime || "",
-      cookTime: json.cookTime || "",
-      totalTime: json.totalTime || "",
-      tasteScore: Number(json.tasteScore ?? 0),
-      simplicityScore: Number(json.simplicityScore ?? 0),
-      overallScore: Number(json.overallScore ?? 0),
-      selectedIngredients: toArray(json.selectedIngredients)
-        .map((x: any) => ({ name: String(x?.name ?? ""), reason: String(x?.reason ?? "") }))
-        .filter((x: any) => x.name),
-      omittedIngredients: toArray(json.omittedIngredients)
-        .map((x: any) => ({ name: String(x?.name ?? ""), reason: String(x?.reason ?? "") }))
-        .filter((x: any) => x.name),
-      ingredientsUS: normalizeIngredients(json.ingredientsUS),
-      ingredientsMetric: normalizeIngredients(json.ingredientsMetric),
-      steps: toArray(json.steps)
-        .map((s: any, i: number) => ({
-          step: Number(s?.step ?? i + 1),
-          instruction: String(s?.instruction ?? ""),
-          time: s?.time ? String(s.time) : undefined,
-          heat: s?.heat ? String(s.heat) : undefined,
-          donenessCue: s?.donenessCue ? String(s.donenessCue) : undefined,
-          tip: s?.tip ? String(s.tip) : undefined
-        }))
-        .filter((s: any) => s.instruction),
-      tips: toArray<string>(json.tips).map(String),
-      substitutions: toArray(json.substitutions)
-        .map((x: any) => ({
-          from: String(x?.from ?? ""),
-          to: String(x?.to ?? ""),
-          note: x?.note ? String(x.note) : undefined
-        }))
-        .filter((x: any) => x.from && x.to),
-      notes: toArray<string>(json.notes).map(String)
-    };
-
-    setRecipe(normalized);
-  } catch (e: any) {
-    console.warn("Primary parse failed:", e);
-
-    // --- repair retry ---
-    try {
-      const repairSys =
-        systemPrompt +
-        `
-REPAIR MODE:
-Return the SAME recipe again as one compact JSON object only.
-No explanations, no markdown. End with a closing }.
-Keep it short so it fits.`;
-
-      const repair = await callServer([
-        { role: "system", content: repairSys },
-        { role: "user", content: userPrompt }
-      ]);
-
-      const raw2 = String(repair?.choices?.[0]?.message?.content ?? "");
-      console.debug("RAW FROM MODEL (repair) →", raw2);
-      const j2 = JSON.parse(sliceToJson(raw2));
-
-      const normalized2 = {
-        title: j2.title || "Untitled",
-        summary: j2.summary || "",
-        dishType: j2.dishType || "main",
-        servings: Number(j2.servings ?? 2),
-        cuisine: j2.cuisine || cuisine,
-        prepTime: j2.prepTime || "",
-        cookTime: j2.cookTime || "",
-        totalTime: j2.totalTime || "",
-        tasteScore: Number(j2.tasteScore ?? 0),
-        simplicityScore: Number(j2.simplicityScore ?? 0),
-        overallScore: Number(j2.overallScore ?? 0),
-        selectedIngredients: toArray(j2.selectedIngredients)
-          .map((x: any) => ({ name: String(x?.name ?? ""), reason: String(x?.reason ?? "") }))
-          .filter((x: any) => x.name),
-        omittedIngredients: toArray(j2.omittedIngredients)
-          .map((x: any) => ({ name: String(x?.name ?? ""), reason: String(x?.reason ?? "") }))
-          .filter((x: any) => x.name),
-        ingredientsUS: normalizeIngredients(j2.ingredientsUS),
-        ingredientsMetric: normalizeIngredients(j2.ingredientsMetric),
-        steps: toArray(j2.steps)
-          .map((s: any, i: number) => ({
-            step: Number(s?.step ?? i + 1),
-            instruction: String(s?.instruction ?? ""),
-            time: s?.time ? String(s.time) : undefined,
-            heat: s?.heat ? String(s.heat) : undefined,
-            donenessCue: s?.donenessCue ? String(s.donenessCue) : undefined,
-            tip: s?.tip ? String(s.tip) : undefined
-          }))
-          .filter((s: any) => s.instruction),
-        tips: toArray<string>(j2.tips).map(String),
-        substitutions: toArray(j2.substitutions)
-          .map((x: any) => ({
-            from: String(x?.from ?? ""),
-            to: String(x?.to ?? ""),
-            note: x?.note ? String(x.note) : undefined
-          }))
-          .filter((x: any) => x.from && x.to),
-        notes: toArray<string>(j2.notes).map(String)
-      };
-
-      setRecipe(normalized2);
-    } catch (e2: any) {
-      setError(e?.message || e2?.message || "Failed to generate. Try again.");
+    if (!ingredients.trim()) {
+      setError("Give me some ingredients first.");
+      return;
     }
-  } finally {
-    setLoading(false);
-  }
-}
 
     setLoading(true);
     try {
@@ -302,17 +159,16 @@ Constraints:
 - JSON only, match the schema.
 `.trim();
 
+      // --- primary call ---
       const data = await callServer([
         { role: "system", content: systemPrompt },
         { role: "user", content: userPrompt }
       ]);
-const raw = String(data?.choices?.[0]?.message?.content ?? "");
-console.debug("RAW FROM MODEL →", raw);
-const json = JSON.parse(sliceToJson(raw));
 
+      const raw = String(data?.choices?.[0]?.message?.content ?? "");
+      console.debug("RAW FROM MODEL →", raw);
+      const json = JSON.parse(sliceToJson(raw));
 
-
-      // normalize shape for rendering
       const normalized = {
         title: json.title || "Untitled",
         summary: json.summary || "",
@@ -325,101 +181,104 @@ const json = JSON.parse(sliceToJson(raw));
         tasteScore: Number(json.tasteScore ?? 0),
         simplicityScore: Number(json.simplicityScore ?? 0),
         overallScore: Number(json.overallScore ?? 0),
-        selectedIngredients: toArray(json.selectedIngredients).map((x: any) => ({
-          name: String(x?.name ?? ""),
-          reason: String(x?.reason ?? "")
-        })).filter((x:any)=>x.name),
-        omittedIngredients: toArray(json.omittedIngredients).map((x: any) => ({
-          name: String(x?.name ?? ""),
-          reason: String(x?.reason ?? "")
-        })).filter((x:any)=>x.name),
+        selectedIngredients: toArray(json.selectedIngredients)
+          .map((x: any) => ({ name: String(x?.name ?? ""), reason: String(x?.reason ?? "") }))
+          .filter((x: any) => x.name),
+        omittedIngredients: toArray(json.omittedIngredients)
+          .map((x: any) => ({ name: String(x?.name ?? ""), reason: String(x?.reason ?? "") }))
+          .filter((x: any) => x.name),
         ingredientsUS: normalizeIngredients(json.ingredientsUS),
         ingredientsMetric: normalizeIngredients(json.ingredientsMetric),
-        steps: toArray(json.steps).map((s:any,i:number)=>({
-          step: Number(s?.step ?? i+1),
-          instruction: String(s?.instruction ?? ""),
-          time: s?.time ? String(s.time) : undefined,
-          heat: s?.heat ? String(s.heat) : undefined,
-          donenessCue: s?.donenessCue ? String(s.donenessCue) : undefined,
-          tip: s?.tip ? String(s.tip) : undefined
-        })).filter((s:any)=>s.instruction),
+        steps: toArray(json.steps)
+          .map((s: any, i: number) => ({
+            step: Number(s?.step ?? i + 1),
+            instruction: String(s?.instruction ?? ""),
+            time: s?.time ? String(s.time) : undefined,
+            heat: s?.heat ? String(s.heat) : undefined,
+            donenessCue: s?.donenessCue ? String(s.donenessCue) : undefined,
+            tip: s?.tip ? String(s.tip) : undefined
+          }))
+          .filter((s: any) => s.instruction),
         tips: toArray<string>(json.tips).map(String),
-        substitutions: toArray(json.substitutions).map((x:any)=>({from:String(x?.from??""), to:String(x?.to??""), note: x?.note?String(x.note):undefined})).filter((x:any)=>x.from && x.to),
+        substitutions: toArray(json.substitutions)
+          .map((x: any) => ({
+            from: String(x?.from ?? ""),
+            to: String(x?.to ?? ""),
+            note: x?.note ? String(x.note) : undefined
+          }))
+          .filter((x: any) => x.from && x.to),
         notes: toArray<string>(json.notes).map(String)
       };
 
       setRecipe(normalized);
     } catch (e: any) {
-  console.warn("Primary parse failed:", e);
+      console.warn("Primary parse failed:", e);
 
-  // --- Repair retry: ask the model to resend compact JSON only ---
-  try {
-    const repairSys =
-      systemPrompt +
-      `
+      // --- repair retry ---
+      try {
+        const repairSys =
+          systemPrompt +
+          `
 REPAIR MODE:
 Return the SAME recipe again as one compact JSON object only.
 No explanations, no markdown. End with a closing }.
 Keep it short so it fits.`;
 
-    const repair = await callServer([
-      { role: "system", content: repairSys },
-      { role: "user", content: userPrompt }
-    ]);
+        const repair = await callServer([
+          { role: "system", content: repairSys },
+          { role: "user", content: userPrompt }
+        ]);
 
-    const raw2 = String(repair?.choices?.[0]?.message?.content ?? "");
-    console.debug("RAW FROM MODEL (repair) →", raw2);
-    const j2 = JSON.parse(sliceToJson(raw2));
+        const raw2 = String(repair?.choices?.[0]?.message?.content ?? "");
+        console.debug("RAW FROM MODEL (repair) →", raw2);
+        const j2 = JSON.parse(sliceToJson(raw2));
 
-    // --- normalize (same as before, but using j2) ---
-    const normalized2 = {
-      title: j2.title || "Untitled",
-      summary: j2.summary || "",
-      dishType: j2.dishType || "main",
-      servings: Number(j2.servings ?? 2),
-      cuisine: j2.cuisine || cuisine,
-      prepTime: j2.prepTime || "",
-      cookTime: j2.cookTime || "",
-      totalTime: j2.totalTime || "",
-      tasteScore: Number(j2.tasteScore ?? 0),
-      simplicityScore: Number(j2.simplicityScore ?? 0),
-      overallScore: Number(j2.overallScore ?? 0),
-      selectedIngredients: toArray(j2.selectedIngredients)
-        .map((x: any) => ({ name: String(x?.name ?? ""), reason: String(x?.reason ?? "") }))
-        .filter((x: any) => x.name),
-      omittedIngredients: toArray(j2.omittedIngredients)
-        .map((x: any) => ({ name: String(x?.name ?? ""), reason: String(x?.reason ?? "") }))
-        .filter((x: any) => x.name),
-      ingredientsUS: normalizeIngredients(j2.ingredientsUS),
-      ingredientsMetric: normalizeIngredients(j2.ingredientsMetric),
-      steps: toArray(j2.steps)
-        .map((s: any, i: number) => ({
-          step: Number(s?.step ?? i + 1),
-          instruction: String(s?.instruction ?? ""),
-          time: s?.time ? String(s.time) : undefined,
-          heat: s?.heat ? String(s.heat) : undefined,
-          donenessCue: s?.donenessCue ? String(s.donenessCue) : undefined,
-          tip: s?.tip ? String(s.tip) : undefined
-        }))
-        .filter((s: any) => s.instruction),
-      tips: toArray<string>(j2.tips).map(String),
-      substitutions: toArray(j2.substitutions)
-        .map((x: any) => ({
-          from: String(x?.from ?? ""),
-          to: String(x?.to ?? ""),
-          note: x?.note ? String(x.note) : undefined
-        }))
-        .filter((x: any) => x.from && x.to),
-      notes: toArray<string>(j2.notes).map(String)
-    };
+        const normalized2 = {
+          title: j2.title || "Untitled",
+          summary: j2.summary || "",
+          dishType: j2.dishType || "main",
+          servings: Number(j2.servings ?? 2),
+          cuisine: j2.cuisine || cuisine,
+          prepTime: j2.prepTime || "",
+          cookTime: j2.cookTime || "",
+          totalTime: j2.totalTime || "",
+          tasteScore: Number(j2.tasteScore ?? 0),
+          simplicityScore: Number(j2.simplicityScore ?? 0),
+          overallScore: Number(j2.overallScore ?? 0),
+          selectedIngredients: toArray(j2.selectedIngredients)
+            .map((x: any) => ({ name: String(x?.name ?? ""), reason: String(x?.reason ?? "") }))
+            .filter((x: any) => x.name),
+          omittedIngredients: toArray(j2.omittedIngredients)
+            .map((x: any) => ({ name: String(x?.name ?? ""), reason: String(x?.reason ?? "") }))
+            .filter((x: any) => x.name),
+          ingredientsUS: normalizeIngredients(j2.ingredientsUS),
+          ingredientsMetric: normalizeIngredients(j2.ingredientsMetric),
+          steps: toArray(j2.steps)
+            .map((s: any, i: number) => ({
+              step: Number(s?.step ?? i + 1),
+              instruction: String(s?.instruction ?? ""),
+              time: s?.time ? String(s.time) : undefined,
+              heat: s?.heat ? String(s.heat) : undefined,
+              donenessCue: s?.donenessCue ? String(s.donenessCue) : undefined,
+              tip: s?.tip ? String(s.tip) : undefined
+            }))
+            .filter((s: any) => s.instruction),
+          tips: toArray<string>(j2.tips).map(String),
+          substitutions: toArray(j2.substitutions)
+            .map((x: any) => ({
+              from: String(x?.from ?? ""),
+              to: String(x?.to ?? ""),
+              note: x?.note ? String(x.note) : undefined
+            }))
+            .filter((x: any) => x.from && x.to),
+          notes: toArray<string>(j2.notes).map(String)
+        };
 
-    setRecipe(normalized2);
-    return; // success after repair
-  } catch (e2: any) {
-    setError(e?.message || e2?.message || "Failed to generate. Try again.");
-  }
-}
-
+        setRecipe(normalized2);
+      } catch (e2: any) {
+        setError(e?.message || e2?.message || "Failed to generate. Try again.");
+      }
+    } finally {
       setLoading(false);
     }
   }
