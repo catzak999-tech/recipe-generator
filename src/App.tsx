@@ -150,10 +150,10 @@ Constraints:
         { role: "system", content: systemPrompt },
         { role: "user", content: userPrompt }
       ]);
-
-const raw = data?.choices?.[0]?.message?.content ?? "";
-console.debug('RAW FROM MODEL →', raw);
+const raw = String(data?.choices?.[0]?.message?.content ?? "");
+console.debug("RAW FROM MODEL →", raw);
 const json = JSON.parse(sliceToJson(raw));
+
 
 
       // normalize shape for rendering
