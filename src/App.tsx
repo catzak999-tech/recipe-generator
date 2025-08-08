@@ -239,9 +239,24 @@ Keep it short so it fits.`;
           { role: "user", content: userPrompt }
         ]);
 
-        const raw2 = String(repair?.choices?.[0]?.message?.content ?? "");
-        console.debug("RAW FROM MODEL (repair) →", raw2);
-        const j2 = JSON.parse(sliceToJson(raw2));
+// Prefer tool-call JSON if present
+const choice = data?.choices?.[0];
+console.debug("CHOICE →", choice); // debug once
+
+const toolArgs = choice?.message?.tool_calls?.[0]?.function?.arguments;
+
+let json: any;
+if (toolArgs) {
+  // toolArgs is strict JSON text from the model
+  console.debug("USING TOOL ARGS");
+  json = JSON.parse(toolArgs);
+} else {
+  // fallback for legacy responses (shouldn't happen now)
+  const raw = String(choice?.message?.content ?? "");
+  console.debug("RAW FROM MODEL →", raw);
+  json = JSON.parse(sliceToJson(raw));
+}
+
 
         const normalized2 = {
           title: j2.title || "Untitled",
